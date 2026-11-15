@@ -50,32 +50,40 @@ public class MainActivity extends Activity {
   }
   private void buildUi(){
     LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(-1);
-    root.setPadding(6,0,6,4);
+    root.setPadding(6,0,6,0);
     TextView heading=new TextView(this);heading.setText("Güvenlik Kamerası");heading.setTextColor(-1);
     heading.setBackgroundColor(0xff000000);heading.setGravity(Gravity.CENTER);heading.setTypeface(null,1);
     heading.setTextSize(22);
-    LinearLayout.LayoutParams h=new LinearLayout.LayoutParams(-1,55);h.topMargin=64;root.addView(heading,h);
-    LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.HORIZONTAL);
+    LinearLayout.LayoutParams h=new LinearLayout.LayoutParams(-1,55);h.topMargin=112;root.addView(heading,h);
+    LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.VERTICAL);
     Button monitor=button("Monitör",0xffb3e5fc),cam=button("Kamera",0xffc8e6c9);
     switchCam=button("Arka/Ön",0xffffcc80);Button pair=button("Eşleştir",0xffffeb3b);
     close=button("Kapat",0xffffcdd2);
-    for(Button b:new Button[]{monitor,cam,switchCam,pair,close})bar.addView(b,new LinearLayout.LayoutParams(0,52,1));
+    LinearLayout row1=new LinearLayout(this),row2=new LinearLayout(this);
+    for(Button b:new Button[]{monitor,cam,switchCam})row1.addView(b,new LinearLayout.LayoutParams(0,44,1));
+    for(Button b:new Button[]{pair,close})row2.addView(b,new LinearLayout.LayoutParams(0,44,1));
+    bar.addView(row1);bar.addView(row2);
     root.addView(bar);
-    screen=new ImageView(this);screen.setBackgroundColor(0xff000000);screen.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,0,1);s.topMargin=5;root.addView(screen,s);
+    screen=new ImageView(this);screen.setBackgroundColor(0xffffffff);screen.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,0,1);s.topMargin=5;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);
     status=new TextView(this);status.setText("Eşleşme bekleniyor");status.setTextColor(0xff777777);
     status.setGravity(Gravity.CENTER);root.addView(status);
     TextView signature=new TextView(this);signature.setText("Muhammed Yusuf OLGUN");
     signature.setGravity(Gravity.CENTER);signature.setTextColor(0xff888888);root.addView(signature);
+    android.view.View bottomSpace=new android.view.View(this);root.addView(bottomSpace,new LinearLayout.LayoutParams(-1,64));
     setContentView(root);
     monitor.setOnClickListener(v->startMonitor());
     cam.setOnClickListener(v->startCamera());
-    switchCam.setOnClickListener(v->{front=!front;if(cameraOn)startCamera();});
+    switchCam.setOnClickListener(v->{front=!front;if(cameraOn)startCamera();else showStatus(front?"Ön kamera seçildi":"Arka kamera seçildi");});
     pair.setOnClickListener(v->pair());
     close.setOnClickListener(v->{long now=System.currentTimeMillis();
-      if(now-closeTap<=3000){closeTap=0;stopCamera();finish();}
+      if(closeTap>0 && now-closeTap<=3000){closeTap=0;stopCamera();finish();}
       else {closeTap=now;close.setText("Onayla");ui.postDelayed(()->{if(System.currentTimeMillis()-closeTap>=3000)close.setText("Kapat");},3100);}
     });
+  }
+  private android.graphics.drawable.Drawable createFrame(){
+    android.graphics.drawable.GradientDrawable border=new android.graphics.drawable.GradientDrawable();
+    border.setColor(0xffffffff);border.setStroke(3,0xff000000);return border;
   }
   private Button button(String label,int color){
     Button b=new Button(this);b.setText(label);b.setTextSize(10);b.setAllCaps(false);
@@ -156,8 +164,8 @@ public class MainActivity extends Activity {
     }catch(Exception e){showStatus("Ağ keşfi hatası");}
   }
   private void startMonitor(){
-    if(pairedId.isEmpty()||peerIp.isEmpty()){showStatus("Önce iki telefonu eşleştirin");return;}
-    stopCamera();monitorOn=true;showStatus("Görüntü bağlanıyor");
+    if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->screen.setImageDrawable(null));showStatus("Önce iki telefonu eşleştirin");return;}
+    stopCamera();monitorOn=true;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
     final String ip=peerIp;
     new Thread(()->{
       try{
