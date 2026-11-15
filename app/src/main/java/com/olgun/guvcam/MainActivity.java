@@ -27,6 +27,9 @@ public class MainActivity extends Activity {
   private final AtomicReference<byte[]> frame=new AtomicReference<>();
   private volatile boolean running=true, cameraOn=false, front=false, monitorOn=false, audioEnabled=false;
   private volatile int monitorSession=0;
+  private volatile boolean remoteAudioAllowed=false;
+  private volatile float zoomRatio=1f;
+  private ScaleGestureDetector zoomGesture;
   private volatile String candidateIp="", candidateId="", peerIp="";
   private String myId, pairedId="";
   private long pairingUntil=0, closeTap=0;
@@ -72,6 +75,7 @@ public class MainActivity extends Activity {
       fullscreen.setScaleType(ImageView.ScaleType.FIT_XY);
       if(lastImage!=null)fullscreen.setImageBitmap(lastImage);
       screen=fullscreen;
+      installZoomGesture();
       setContentView(fullscreen);
       return;
     }
@@ -95,7 +99,7 @@ public class MainActivity extends Activity {
     screen=new ImageView(this);screen.setBackgroundColor(0xffffffff);screen.setScaleType(ImageView.ScaleType.FIT_CENTER);
     int displayWidth=getResources().getDisplayMetrics().widthPixels;
     int horizontalPadding=(int)(12*getResources().getDisplayMetrics().density);
-    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,displayWidth-horizontalPadding);s.topMargin=16;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);if(lastImage!=null)screen.setImageBitmap(lastImage);
+    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,displayWidth-horizontalPadding);s.topMargin=16;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);installZoomGesture();if(lastImage!=null)screen.setImageBitmap(lastImage);
     status=new TextView(this);status.setText("Eşleşme bekleniyor");status.setTextColor(0xff777777);
     status.setGravity(Gravity.CENTER);root.addView(status);
     TextView signature=new TextView(this);signature.setText("Muhammed Yusuf OLGUN");
@@ -121,7 +125,7 @@ public class MainActivity extends Activity {
       audioButton.setText(audioEnabled?"Ses: Açık":"Ses: Kapalı");
       audioButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(audioEnabled?0xff777777:0xffdddddd));
       showStatus(audioEnabled?"Ses etkin":"Ses kapalı");
-      if(monitorOn && audioEnabled)startAudioMonitor(monitorSession);
+      if(monitorOn){sendRemoteAudioState(audioEnabled);if(audioEnabled)startAudioMonitor(monitorSession);}
     });
     close.setOnClickListener(v->{long now=System.currentTimeMillis();
       if(closeTap>0 && now-closeTap<=3000){closeTap=0;stopCamera();finish();}
@@ -171,7 +175,7 @@ public class MainActivity extends Activity {
           if(!monitorOn && !switchingCamera)ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(jpg,0,jpg.length);screen.setImageBitmap(lastImage);}});
         }catch(Exception ignored){}
       });
-      cameraOn=true;camera.startPreview();switchingCamera=false;showStatus(front?"Ön kamera açık":"Arka kamera açık");
+      cameraOn=true;camera.startPreview();applyCameraZoom(zoomRatio);switchingCamera=false;showStatus(front?"Ön kamera açık":"Arka kamera açık");
     }catch(Exception e){stopCamera();switchingCamera=false;showStatus("Kamera açılamadı: "+e.getMessage());}
   }
   private void pair(){
@@ -217,9 +221,9 @@ public class MainActivity extends Activity {
   }
   private void startMonitor(){
     if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->{lastImage=null;screen.setImageDrawable(null);});showStatus("Önce iki telefonu eşleştirin");return;}
-    stopCamera();monitorOn=true;monitorSession++;final int session=monitorSession;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
+    stopCamera();monitorOn=true;zoomRatio=1f;monitorSession++;final int session=monitorSession;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
     final String ip=peerIp;
-    if(audioEnabled)startAudioMonitor(session);
+    if(audioEnabled){sendRemoteAudioState(true);startAudioMonitor(session);}
     new Thread(()->{
       try{
         URL command=new URL("http://"+ip+":"+port+"/start?id="+URLEncoder.encode(myId,"UTF-8"));
@@ -272,6 +276,20 @@ public class MainActivity extends Activity {
         });
         out.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".getBytes());return;
       }
+      if(path.startsWith("/audio/start")){
+        remoteAudioAllowed=checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED;
+        if(!remoteAudioAllowed)ui.post(()->requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},2));
+        out.write((remoteAudioAllowed?"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n":"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n").getBytes());return;
+      }
+      if(path.startsWith("/audio/stop")){
+        remoteAudioAllowed=false;
+        out.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".getBytes());return;
+      }
+      if(path.startsWith("/zoom")){
+        String z=path.contains("level=")?path.substring(path.indexOf("level=")+6).split("&")[0]:"1";
+        try{float requested=Float.parseFloat(z);ui.post(()->applyCameraZoom(requested));}catch(Exception ignored){}
+        out.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".getBytes());return;
+      }
       if(path.startsWith("/audio")){s.setSoTimeout(0);streamAudio(out);return;}
       if(path.startsWith("/stream")){
         s.setSoTimeout(0);
@@ -288,7 +306,7 @@ public class MainActivity extends Activity {
     }catch(Exception ignored){}
   }
   private void streamAudio(OutputStream out) throws IOException {
-    if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+    if(!remoteAudioAllowed || checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
       out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes());return;
     }
     final int rate=16000;
@@ -301,7 +319,7 @@ public class MainActivity extends Activity {
       out.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n\r\n".getBytes());
       recorder.startRecording();
       byte[] buf=new byte[2048];
-      while(running){
+      while(running && remoteAudioAllowed){
         int n=recorder.read(buf,0,buf.length);
         if(n>0){out.write(buf,0,n);out.flush();}
         else if(n<0)break;
@@ -309,13 +327,56 @@ public class MainActivity extends Activity {
     }catch(Exception e){showStatus("Mikrofon hatası: "+e.getMessage());}
     finally{if(recorder!=null){try{recorder.stop();}catch(Exception ignored){}recorder.release();}}
   }
+  private void sendRemoteAudioState(boolean enabled){
+    if(peerIp.isEmpty())return;
+    final String endpoint="http://"+peerIp+":"+port+(enabled?"/audio/start":"/audio/stop")+"?id="+myId;
+    new Thread(()->{try{
+      HttpURLConnection c=(HttpURLConnection)new URL(endpoint).openConnection();
+      c.setConnectTimeout(3000);c.setReadTimeout(3000);
+      int code=c.getResponseCode();c.disconnect();
+      if(enabled && code!=200)showStatus("Kamera telefonunda mikrofon izni gerekli");
+    }catch(Exception e){showStatus("Ses komutu gönderilemedi");}},"audio-control").start();
+  }
+  private void installZoomGesture(){
+    zoomGesture=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
+      @Override public boolean onScale(ScaleGestureDetector detector){
+        if(!monitorOn)return false;
+        zoomRatio=Math.max(1f,Math.min(5f,zoomRatio*detector.getScaleFactor()));
+        if(!peerIp.isEmpty()){
+          final float ratio=zoomRatio;
+          final String ip=peerIp;
+          // Limit requests while fingers move, without interrupting the video stream.
+          long now=System.currentTimeMillis();
+          if(now-lastZoomSent>120){lastZoomSent=now;
+            new Thread(()->{try{
+              HttpURLConnection c=(HttpURLConnection)new URL("http://"+ip+":"+port+"/zoom?id="+myId+"&level="+ratio).openConnection();
+              c.setConnectTimeout(2000);c.setReadTimeout(2000);c.getResponseCode();c.disconnect();
+            }catch(Exception ignored){}},"zoom").start();
+          }
+        }
+        return true;
+      }
+    });
+    screen.setOnTouchListener((v,event)->{if(monitorOn && zoomGesture!=null){zoomGesture.onTouchEvent(event);return event.getPointerCount()>1 || zoomGesture.isInProgress();}return false;});
+  }
+  private long lastZoomSent=0;
+  private synchronized void applyCameraZoom(float ratio){
+    if(camera==null)return;
+    try{
+      Camera.Parameters p=camera.getParameters();
+      if(!p.isZoomSupported())return;
+      int max=p.getMaxZoom();
+      int target=Math.max(0,Math.min(max,Math.round((ratio-1f)/4f*max)));
+      p.setZoom(target);camera.setParameters(p);
+    }catch(Exception e){showStatus("Yakınlaştırma desteklenmiyor");}
+  }
   private void startAudioMonitor(int session){
     new Thread(()->{
       AudioTrack player=null;HttpURLConnection conn=null;
       try{
         if(peerIp.isEmpty())return;
         conn=(HttpURLConnection)new URL("http://"+peerIp+":"+port+"/audio?id="+URLEncoder.encode(myId,"UTF-8")).openConnection();
-        conn.setConnectTimeout(4000);conn.setReadTimeout(6000);
+        conn.setConnectTimeout(4000);conn.setReadTimeout(12000);
         if(conn.getResponseCode()!=200){showStatus("Kamera telefonunda mikrofon izni gerekli");return;}
         int min=AudioTrack.getMinBufferSize(16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
         player=new AudioTrack(AudioManager.STREAM_MUSIC,16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,8192),AudioTrack.MODE_STREAM);
