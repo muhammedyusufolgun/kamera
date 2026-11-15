@@ -65,7 +65,7 @@ public class MainActivity extends Activity {
   @Override public void onConfigurationChanged(Configuration config){
     super.onConfigurationChanged(config);
     buildUi();
-    if(cameraOn && !monitorOn)startCamera();
+    // Keep camera and audio sockets alive during monitor orientation changes.
   }
   private void buildUi(){
     boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
@@ -141,10 +141,7 @@ public class MainActivity extends Activity {
       Matrix matrix=new Matrix();matrix.postRotate(90);
       return Bitmap.createBitmap(source,0,0,source.getWidth(),source.getHeight(),matrix,true);
     }
-    if(!landscape && source.getWidth()>source.getHeight()){
-      Matrix matrix=new Matrix();matrix.postRotate(270);
-      return Bitmap.createBitmap(source,0,0,source.getWidth(),source.getHeight(),matrix,true);
-    }
+
     return source;
   }
   private android.graphics.drawable.Drawable createFrame(){
@@ -155,7 +152,7 @@ public class MainActivity extends Activity {
     Button b=new Button(this);b.setText(label);b.setTextSize(10);b.setAllCaps(false);
     b.setPadding(0,0,0,0);b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(color));return b;
   }
-  private void showStatus(String text){ui.post(()->status.setText(text));}
+  private void showStatus(String text){ui.post(()->{if(status!=null)status.setText(text);});}
   private synchronized void stopCamera(){
     cameraOn=false;
     if(camera!=null){try{camera.setPreviewCallback(null);camera.stopPreview();camera.release();}catch(Exception ignored){}camera=null;}
@@ -207,7 +204,7 @@ public class MainActivity extends Activity {
             }
           }
           frame.set(jpg);
-          if(!monitorOn && !switchingCamera){final byte[] displayJpeg=jpg;ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(displayJpeg,0,displayJpeg.length);screen.setImageBitmap(orientForScreen(lastImage));}});}
+          if(!monitorOn && !switchingCamera){final byte[] displayJpeg=jpg;ui.post(()->{if(cameraOn && !monitorOn && screen!=null){lastImage=BitmapFactory.decodeByteArray(displayJpeg,0,displayJpeg.length);screen.setImageBitmap(orientForScreen(lastImage));}});}
         }catch(Exception ignored){}
       });
       cameraOn=true;camera.startPreview();applyCameraZoom(zoomRatio);switchingCamera=false;showStatus(front?"Ön kamera açık":"Arka kamera açık");
@@ -415,7 +412,7 @@ public class MainActivity extends Activity {
         int enableCode=enable.getResponseCode();enable.disconnect();
         if(enableCode!=200){showStatus("Kamera telefonunda mikrofon izni gerekli");return;}
         conn=(HttpURLConnection)new URL("http://"+peerIp+":"+port+"/audio?id="+URLEncoder.encode(myId,"UTF-8")).openConnection();
-        conn.setConnectTimeout(4000);conn.setReadTimeout(12000);
+        conn.setConnectTimeout(4000);conn.setReadTimeout(0);
         if(conn.getResponseCode()!=200){showStatus("Kamera telefonunda mikrofon izni gerekli");return;}
         int min=AudioTrack.getMinBufferSize(16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
         player=new AudioTrack(AudioManager.STREAM_MUSIC,16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,8192),AudioTrack.MODE_STREAM);
@@ -425,7 +422,7 @@ public class MainActivity extends Activity {
           while(running && monitorOn && audioEnabled && session==monitorSession && (n=in.read(buf))!=-1)
             if(n>0)player.write(buf,0,n);
         }
-      }catch(Exception e){if(monitorOn && audioEnabled)showStatus("Ses bağlantısı kesildi");}
+      }catch(Exception e){if(monitorOn && audioEnabled && session==monitorSession)showStatus("Ses bağlantısı kesildi: "+e.getMessage());}
       finally{if(player!=null){try{player.stop();}catch(Exception ignored){}player.release();}if(conn!=null)conn.disconnect();}
     },"audio-monitor").start();
   }
