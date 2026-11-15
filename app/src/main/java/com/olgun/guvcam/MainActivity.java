@@ -32,6 +32,8 @@ public class MainActivity extends Activity {
   private ScaleGestureDetector zoomGesture;
   private GestureDetector doubleTapGesture;
   private boolean monitorFullscreen=false;
+  private volatile int cameraDeviceDegrees=0;
+  private OrientationEventListener cameraOrientationListener;
   private final java.util.concurrent.ExecutorService zoomExecutor=java.util.concurrent.Executors.newSingleThreadExecutor();
   private final java.util.concurrent.atomic.AtomicBoolean zoomSending=new java.util.concurrent.atomic.AtomicBoolean(false);
   private volatile float pendingZoom=1f;
@@ -57,6 +59,12 @@ public class MainActivity extends Activity {
     myId=prefs.getString("id","");
     if(myId.isEmpty()){myId=UUID.randomUUID().toString();prefs.edit().putString("id",myId).apply();}
     pairedId=prefs.getString("peer","");
+    cameraOrientationListener=new OrientationEventListener(this){
+      @Override public void onOrientationChanged(int orientation){
+        if(orientation!=ORIENTATION_UNKNOWN)cameraDeviceDegrees=((orientation+45)/90*90)%360;
+      }
+    };
+    if(cameraOrientationListener.canDetectOrientation())cameraOrientationListener.enable();
     buildUi();
     if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
       requestPermissions(new String[]{Manifest.permission.CAMERA},1);
@@ -79,6 +87,7 @@ public class MainActivity extends Activity {
       ImageView fullscreen=new ImageView(this);
       fullscreen.setBackgroundColor(0xff000000);
       fullscreen.setScaleType(ImageView.ScaleType.CENTER_CROP);
+      fullscreen.setAdjustViewBounds(false);
       if(lastImage!=null)fullscreen.setImageBitmap(orientForScreen(lastImage));
       screen=fullscreen;
       installZoomGesture();
@@ -194,9 +203,11 @@ public class MainActivity extends Activity {
         try{ByteArrayOutputStream out=new ByteArrayOutputStream();
           new YuvImage(data,ImageFormat.NV21,w,ht,null).compressToJpeg(new Rect(0,0,w,ht),65,out);
           byte[] jpg=out.toByteArray();
-          int currentRotation=getWindowManager().getDefaultDisplay().getRotation();
-          int displayDegrees=currentRotation==Surface.ROTATION_90?90:currentRotation==Surface.ROTATION_180?180:currentRotation==Surface.ROTATION_270?270:0;
-          int jpegRotation=frontFacing?(sensorOrientation+displayDegrees)%360:(sensorOrientation-displayDegrees+360)%360;
+          // Physical orientation sensor works even when auto-rotate is disabled.
+          int deviceDegrees=cameraDeviceDegrees;
+          int jpegRotation=frontFacing
+              ?(sensorOrientation-deviceDegrees+360)%360
+              :(sensorOrientation-deviceDegrees+360)%360;
           if(jpegRotation!=0){
             Bitmap original=BitmapFactory.decodeByteArray(jpg,0,jpg.length);
             if(original!=null){
@@ -469,5 +480,6 @@ public class MainActivity extends Activity {
   }
   @Override protected void onDestroy(){running=false;monitorOn=false;monitorSession++;stopCamera();
     zoomExecutor.shutdownNow();
+    if(cameraOrientationListener!=null)cameraOrientationListener.disable();
     if(multicastLock!=null&&multicastLock.isHeld())multicastLock.release();super.onDestroy();}
 }
