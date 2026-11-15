@@ -286,7 +286,7 @@ public class MainActivity extends Activity {
       out.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n\r\n".getBytes());
       recorder.startRecording();
       byte[] buf=new byte[2048];
-      while(running && cameraOn){
+      while(running){
         int n=recorder.read(buf,0,buf.length);
         if(n>0){out.write(buf,0,n);out.flush();}
         else if(n<0)break;
