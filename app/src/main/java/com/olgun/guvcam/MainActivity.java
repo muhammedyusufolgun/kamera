@@ -65,6 +65,7 @@ public class MainActivity extends Activity {
   @Override public void onConfigurationChanged(Configuration config){
     super.onConfigurationChanged(config);
     buildUi();
+    if(cameraOn && !monitorOn)startCamera();
   }
   private void buildUi(){
     boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
@@ -72,8 +73,8 @@ public class MainActivity extends Activity {
       getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);
       ImageView fullscreen=new ImageView(this);
       fullscreen.setBackgroundColor(0xff000000);
-      fullscreen.setScaleType(ImageView.ScaleType.FIT_XY);
-      if(lastImage!=null)fullscreen.setImageBitmap(lastImage);
+      fullscreen.setScaleType(ImageView.ScaleType.CENTER_CROP);
+      if(lastImage!=null)fullscreen.setImageBitmap(orientForScreen(lastImage));
       screen=fullscreen;
       installZoomGesture();
       setContentView(fullscreen);
@@ -99,7 +100,7 @@ public class MainActivity extends Activity {
     screen=new ImageView(this);screen.setBackgroundColor(0xffffffff);screen.setScaleType(ImageView.ScaleType.FIT_CENTER);
     int displayWidth=getResources().getDisplayMetrics().widthPixels;
     int horizontalPadding=(int)(12*getResources().getDisplayMetrics().density);
-    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,displayWidth-horizontalPadding);s.topMargin=16;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);installZoomGesture();if(lastImage!=null)screen.setImageBitmap(lastImage);
+    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,displayWidth-horizontalPadding);s.topMargin=16;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);installZoomGesture();if(lastImage!=null)screen.setImageBitmap(orientForScreen(lastImage));
     status=new TextView(this);status.setText("Eşleşme bekleniyor");status.setTextColor(0xff777777);
     status.setGravity(Gravity.CENTER);root.addView(status);
     TextView signature=new TextView(this);signature.setText("Muhammed Yusuf OLGUN");
@@ -131,6 +132,20 @@ public class MainActivity extends Activity {
       if(closeTap>0 && now-closeTap<=3000){closeTap=0;stopCamera();finish();}
       else {closeTap=now;close.setText("Onayla");ui.postDelayed(()->{if(System.currentTimeMillis()-closeTap>=3000)close.setText("Kapat");},3100);}
     });
+  }
+  private Bitmap orientForScreen(Bitmap source){
+    if(source==null)return null;
+    boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
+    // Stream frames are upright in portrait; turn portrait frames when the monitor is sideways.
+    if(landscape && source.getHeight()>source.getWidth()){
+      Matrix matrix=new Matrix();matrix.postRotate(90);
+      return Bitmap.createBitmap(source,0,0,source.getWidth(),source.getHeight(),matrix,true);
+    }
+    if(!landscape && source.getWidth()>source.getHeight()){
+      Matrix matrix=new Matrix();matrix.postRotate(270);
+      return Bitmap.createBitmap(source,0,0,source.getWidth(),source.getHeight(),matrix,true);
+    }
+    return source;
   }
   private android.graphics.drawable.Drawable createFrame(){
     android.graphics.drawable.GradientDrawable border=new android.graphics.drawable.GradientDrawable();
@@ -192,7 +207,7 @@ public class MainActivity extends Activity {
             }
           }
           frame.set(jpg);
-          if(!monitorOn && !switchingCamera){final byte[] displayJpeg=jpg;ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(displayJpeg,0,displayJpeg.length);screen.setImageBitmap(lastImage);}});}
+          if(!monitorOn && !switchingCamera){final byte[] displayJpeg=jpg;ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(displayJpeg,0,displayJpeg.length);screen.setImageBitmap(orientForScreen(lastImage));}});}
         }catch(Exception ignored){}
       });
       cameraOn=true;camera.startPreview();applyCameraZoom(zoomRatio);switchingCamera=false;showStatus(front?"Ön kamera açık":"Arka kamera açık");
@@ -257,7 +272,7 @@ public class MainActivity extends Activity {
           if(!collecting){if(prev==255&&b==216){collecting=true;jpg.reset();jpg.write(255);jpg.write(216);}}
           else {jpg.write(b);if(prev==255&&b==217){
             byte[] bytes=jpg.toByteArray();Bitmap bmp=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
-            if(bmp!=null)ui.post(()->{if(monitorOn && session==monitorSession){lastImage=bmp;screen.setImageBitmap(bmp);}});
+            if(bmp!=null)ui.post(()->{if(monitorOn && session==monitorSession){lastImage=bmp;screen.setImageBitmap(orientForScreen(bmp));}});
             collecting=false;
           } if(jpg.size()>3000000){collecting=false;jpg.reset();}}
           prev=b;
