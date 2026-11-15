@@ -125,7 +125,7 @@ public class MainActivity extends Activity {
       audioButton.setText(audioEnabled?"Ses: Açık":"Ses: Kapalı");
       audioButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(audioEnabled?0xff777777:0xffdddddd));
       showStatus(audioEnabled?"Ses etkin":"Ses kapalı");
-      if(monitorOn){sendRemoteAudioState(audioEnabled);if(audioEnabled)startAudioMonitor(monitorSession);}
+      if(monitorOn){if(audioEnabled)startAudioMonitor(monitorSession);else sendRemoteAudioState(false);}
     });
     close.setOnClickListener(v->{long now=System.currentTimeMillis();
       if(closeTap>0 && now-closeTap<=3000){closeTap=0;stopCamera();finish();}
@@ -223,7 +223,7 @@ public class MainActivity extends Activity {
     if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->{lastImage=null;screen.setImageDrawable(null);});showStatus("Önce iki telefonu eşleştirin");return;}
     stopCamera();monitorOn=true;zoomRatio=1f;monitorSession++;final int session=monitorSession;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
     final String ip=peerIp;
-    if(audioEnabled){sendRemoteAudioState(true);startAudioMonitor(session);}
+    if(audioEnabled)startAudioMonitor(session);
     new Thread(()->{
       try{
         URL command=new URL("http://"+ip+":"+port+"/start?id="+URLEncoder.encode(myId,"UTF-8"));
@@ -375,6 +375,10 @@ public class MainActivity extends Activity {
       AudioTrack player=null;HttpURLConnection conn=null;
       try{
         if(peerIp.isEmpty())return;
+        HttpURLConnection enable=(HttpURLConnection)new URL("http://"+peerIp+":"+port+"/audio/start?id="+URLEncoder.encode(myId,"UTF-8")).openConnection();
+        enable.setConnectTimeout(4000);enable.setReadTimeout(4000);
+        int enableCode=enable.getResponseCode();enable.disconnect();
+        if(enableCode!=200){showStatus("Kamera telefonunda mikrofon izni gerekli");return;}
         conn=(HttpURLConnection)new URL("http://"+peerIp+":"+port+"/audio?id="+URLEncoder.encode(myId,"UTF-8")).openConnection();
         conn.setConnectTimeout(4000);conn.setReadTimeout(12000);
         if(conn.getResponseCode()!=200){showStatus("Kamera telefonunda mikrofon izni gerekli");return;}
