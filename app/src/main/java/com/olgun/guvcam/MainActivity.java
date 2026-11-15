@@ -5,6 +5,7 @@ import android.app.*;
 import android.os.*;
 import android.content.*;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.*;
 import android.hardware.Camera;
 import android.net.wifi.WifiManager;
@@ -26,6 +27,7 @@ public class MainActivity extends Activity {
   private Camera camera;
   private SurfaceTexture surface;
   private ImageView screen;
+  private Bitmap lastImage;
   private TextView status;
   private Button close, switchCam;
   private final Handler ui=new Handler(Looper.getMainLooper());
@@ -48,7 +50,23 @@ public class MainActivity extends Activity {
     new Thread(this::discoveryLoop,"discovery").start();
     new Thread(this::serverLoop,"server").start();
   }
+  @Override public void onConfigurationChanged(Configuration config){
+    super.onConfigurationChanged(config);
+    buildUi();
+  }
   private void buildUi(){
+    boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
+    if(landscape){
+      getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);
+      ImageView fullscreen=new ImageView(this);
+      fullscreen.setBackgroundColor(0xff000000);
+      fullscreen.setScaleType(ImageView.ScaleType.FIT_XY);
+      if(lastImage!=null)fullscreen.setImageBitmap(lastImage);
+      screen=fullscreen;
+      setContentView(fullscreen);
+      return;
+    }
+    getWindow().getDecorView().setSystemUiVisibility(0);
     LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(-1);
     root.setPadding(6,0,6,0);
     TextView heading=new TextView(this);heading.setText("Güvenlik Kamerası");heading.setTextColor(-1);
@@ -65,7 +83,7 @@ public class MainActivity extends Activity {
     bar.addView(row1);bar.addView(row2);
     root.addView(bar);
     screen=new ImageView(this);screen.setBackgroundColor(0xffffffff);screen.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,0,1);s.topMargin=5;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);
+    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,220);s.topMargin=5;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);if(lastImage!=null)screen.setImageBitmap(lastImage);
     status=new TextView(this);status.setText("Eşleşme bekleniyor");status.setTextColor(0xff777777);
     status.setGravity(Gravity.CENTER);root.addView(status);
     TextView signature=new TextView(this);signature.setText("Muhammed Yusuf OLGUN");
@@ -116,7 +134,7 @@ public class MainActivity extends Activity {
         try{ByteArrayOutputStream out=new ByteArrayOutputStream();
           new YuvImage(data,ImageFormat.NV21,w,ht,null).compressToJpeg(new Rect(0,0,w,ht),65,out);
           byte[] jpg=out.toByteArray();frame.set(jpg);
-          if(!monitorOn)ui.post(()->{if(cameraOn)screen.setImageBitmap(BitmapFactory.decodeByteArray(jpg,0,jpg.length));});
+          if(!monitorOn)ui.post(()->{if(cameraOn){lastImage=BitmapFactory.decodeByteArray(jpg,0,jpg.length);screen.setImageBitmap(lastImage);}});
         }catch(Exception ignored){}
       });
       cameraOn=true;camera.startPreview();showStatus(front?"Ön kamera açık":"Arka kamera açık");
@@ -164,7 +182,7 @@ public class MainActivity extends Activity {
     }catch(Exception e){showStatus("Ağ keşfi hatası");}
   }
   private void startMonitor(){
-    if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->screen.setImageDrawable(null));showStatus("Önce iki telefonu eşleştirin");return;}
+    if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->{lastImage=null;screen.setImageDrawable(null);});showStatus("Önce iki telefonu eşleştirin");return;}
     stopCamera();monitorOn=true;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
     final String ip=peerIp;
     new Thread(()->{
@@ -180,7 +198,7 @@ public class MainActivity extends Activity {
           if(!collecting){if(prev==255&&b==216){collecting=true;jpg.reset();jpg.write(255);jpg.write(216);}}
           else {jpg.write(b);if(prev==255&&b==217){
             byte[] bytes=jpg.toByteArray();Bitmap bmp=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
-            if(bmp!=null)ui.post(()->{if(monitorOn)screen.setImageBitmap(bmp);});
+            if(bmp!=null)ui.post(()->{if(monitorOn){lastImage=bmp;screen.setImageBitmap(bmp);}});
             collecting=false;
           } if(jpg.size()>3000000){collecting=false;jpg.reset();}}
           prev=b;
