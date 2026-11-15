@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class MainActivity extends Activity {
   private final int port=8787, discoveryPort=8788;
   private final AtomicReference<byte[]> frame=new AtomicReference<>();
-  private volatile boolean running=true, cameraOn=false, front=false, monitorOn=false;
+  private volatile boolean running=true, cameraOn=false, front=false, monitorOn=false, audioEnabled=false;
   private volatile String candidateIp="", candidateId="", peerIp="";
   private String myId, pairedId="";
   private long pairingUntil=0, closeTap=0;
@@ -29,7 +29,7 @@ public class MainActivity extends Activity {
   private ImageView screen;
   private Bitmap lastImage;
   private TextView status;
-  private Button close, switchCam;
+  private Button close, switchCam, audioButton;
   private final Handler ui=new Handler(Looper.getMainLooper());
   private WifiManager.MulticastLock multicastLock;
 
@@ -77,9 +77,10 @@ public class MainActivity extends Activity {
     Button monitor=button("Monitör",0xffb3e5fc),cam=button("Kamera",0xffc8e6c9);
     switchCam=button("Arka/Ön",0xffffcc80);Button pair=button("Eşleştir",0xffffeb3b);
     close=button("Kapat",0xffffcdd2);
+    audioButton=button("Ses: Kapalı",0xffdddddd);
     LinearLayout row1=new LinearLayout(this),row2=new LinearLayout(this);
     for(Button b:new Button[]{monitor,cam,switchCam})row1.addView(b,new LinearLayout.LayoutParams(0,80,1));
-    for(Button b:new Button[]{pair,close})row2.addView(b,new LinearLayout.LayoutParams(0,44,1));
+    for(Button b:new Button[]{pair,audioButton,close})row2.addView(b,new LinearLayout.LayoutParams(0,80,1));
     bar.addView(row1);bar.addView(row2);
     LinearLayout.LayoutParams controls=new LinearLayout.LayoutParams(-1,-2);controls.topMargin=16;root.addView(bar,controls);
     screen=new ImageView(this);screen.setBackgroundColor(0xffffffff);screen.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -96,6 +97,15 @@ public class MainActivity extends Activity {
     cam.setOnClickListener(v->startCamera());
     switchCam.setOnClickListener(v->{front=!front;if(cameraOn)startCamera();else showStatus(front?"Ön kamera seçildi":"Arka kamera seçildi");});
     pair.setOnClickListener(v->pair());
+    audioButton.setOnClickListener(v->{
+      if(!audioEnabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+        requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},2);return;
+      }
+      audioEnabled=!audioEnabled;
+      audioButton.setText(audioEnabled?"Ses: Açık":"Ses: Kapalı");
+      audioButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(audioEnabled?0xff777777:0xffdddddd));
+      showStatus(audioEnabled?"Ses seçildi (ses aktarımı henüz desteklenmiyor)":"Ses kapalı");
+    });
     close.setOnClickListener(v->{long now=System.currentTimeMillis();
       if(closeTap>0 && now-closeTap<=3000){closeTap=0;stopCamera();finish();}
       else {closeTap=now;close.setText("Onayla");ui.postDelayed(()->{if(System.currentTimeMillis()-closeTap>=3000)close.setText("Kapat");},3100);}
@@ -226,7 +236,7 @@ public class MainActivity extends Activity {
         out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes());return;
       }
       if(path.startsWith("/start")){
-        ui.post(()->{front=false;startCamera();});
+        ui.post(()->{front=false;startCamera();if(cameraOn)moveTaskToBack(true);});
         out.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".getBytes());return;
       }
       if(path.startsWith("/stream")){
