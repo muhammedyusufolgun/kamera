@@ -8,6 +8,11 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.*;
 import android.hardware.Camera;
+import android.media.AudioRecord;
+import android.media.AudioTrack;
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.MediaRecorder;
 import android.net.wifi.WifiManager;
 import android.view.*;
 import android.widget.*;
@@ -21,6 +26,7 @@ public class MainActivity extends Activity {
   private final int port=8787, discoveryPort=8788;
   private final AtomicReference<byte[]> frame=new AtomicReference<>();
   private volatile boolean running=true, cameraOn=false, front=false, monitorOn=false, audioEnabled=false;
+  private volatile int monitorSession=0;
   private volatile String candidateIp="", candidateId="", peerIp="";
   private String myId, pairedId="";
   private long pairingUntil=0, closeTap=0;
@@ -77,7 +83,7 @@ public class MainActivity extends Activity {
     Button monitor=button("Monitör",0xffb3e5fc),cam=button("Kamera",0xffc8e6c9);
     switchCam=button("Arka/Ön",0xffffcc80);Button pair=button("Eşleştir",0xffffeb3b);
     close=button("Kapat",0xffffcdd2);
-    audioButton=button("Ses: Kapalı",0xffdddddd);
+    audioButton=button(audioEnabled?"Ses: Açık":"Ses: Kapalı",audioEnabled?0xff777777:0xffdddddd);
     LinearLayout row1=new LinearLayout(this),row2=new LinearLayout(this);
     for(Button b:new Button[]{monitor,cam,switchCam})row1.addView(b,new LinearLayout.LayoutParams(0,80,1));
     for(Button b:new Button[]{pair,audioButton,close})row2.addView(b,new LinearLayout.LayoutParams(0,80,1));
@@ -95,16 +101,24 @@ public class MainActivity extends Activity {
     setContentView(root);
     monitor.setOnClickListener(v->startMonitor());
     cam.setOnClickListener(v->startCamera());
-    switchCam.setOnClickListener(v->{front=!front;if(cameraOn)startCamera();else showStatus(front?"Ön kamera seçildi":"Arka kamera seçildi");});
+    switchCam.setOnClickListener(v->{
+      front=!front;
+      if(monitorOn && !peerIp.isEmpty()){
+        final String endpoint="http://"+peerIp+":"+port+"/switch?id="+myId;
+        new Thread(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(endpoint).openConnection();c.setConnectTimeout(3000);c.getResponseCode();c.disconnect();}catch(Exception e){showStatus("Kamera değiştirme hatası");}}).start();
+      }else if(cameraOn)startCamera();
+      else showStatus(front?"Ön kamera seçildi":"Arka kamera seçildi");
+    });
     pair.setOnClickListener(v->pair());
     audioButton.setOnClickListener(v->{
-      if(!audioEnabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+      if(!audioEnabled && !monitorOn && checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
         requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},2);return;
       }
       audioEnabled=!audioEnabled;
       audioButton.setText(audioEnabled?"Ses: Açık":"Ses: Kapalı");
       audioButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(audioEnabled?0xff777777:0xffdddddd));
-      showStatus(audioEnabled?"Ses seçildi (ses aktarımı henüz desteklenmiyor)":"Ses kapalı");
+      showStatus(audioEnabled?"Ses etkin":"Ses kapalı");
+      if(monitorOn && audioEnabled)startAudioMonitor(monitorSession);
     });
     close.setOnClickListener(v->{long now=System.currentTimeMillis();
       if(closeTap>0 && now-closeTap<=3000){closeTap=0;stopCamera();finish();}
@@ -127,7 +141,7 @@ public class MainActivity extends Activity {
   }
   private synchronized void startCamera(){
     if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){showStatus("Kamera izni gerekli");return;}
-    stopCamera();monitorOn=false;
+    stopCamera();
     try{
       int selected=0;
       int count=Camera.getNumberOfCameras();
@@ -135,7 +149,7 @@ public class MainActivity extends Activity {
         if(info.facing==(front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK)){selected=i;break;}}
       camera=Camera.open(selected);
       Camera.Parameters p=camera.getParameters();
-      p.setFlashMode(Camera.Parameters.FLASH_MODE_OFF);
+      if(p.getSupportedFlashModes()!=null && p.getSupportedFlashModes().contains(Camera.Parameters.FLASH_MODE_OFF))p.setFlashMode(Camera.Parameters.FLASH_MODE_OFF);
       Camera.Size size=p.getSupportedPreviewSizes().get(0);
       for(Camera.Size z:p.getSupportedPreviewSizes())if(z.width<=1280 && z.width>size.width || size.width>1280 && z.width<=1280)size=z;
       p.setPreviewSize(size.width,size.height);camera.setParameters(p);
@@ -195,8 +209,9 @@ public class MainActivity extends Activity {
   }
   private void startMonitor(){
     if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->{lastImage=null;screen.setImageDrawable(null);});showStatus("Önce iki telefonu eşleştirin");return;}
-    stopCamera();monitorOn=true;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
+    stopCamera();monitorOn=true;monitorSession++;final int session=monitorSession;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
     final String ip=peerIp;
+    if(audioEnabled)startAudioMonitor(session);
     new Thread(()->{
       try{
         URL command=new URL("http://"+ip+":"+port+"/start?id="+URLEncoder.encode(myId,"UTF-8"));
@@ -206,11 +221,11 @@ public class MainActivity extends Activity {
         stream.setConnectTimeout(4000);stream.setReadTimeout(6000);
         InputStream in=stream.getInputStream();ByteArrayOutputStream jpg=new ByteArrayOutputStream();
         int prev=-1,b;boolean collecting=false;
-        while(monitorOn && (b=in.read())!=-1){
+        while(monitorOn && session==monitorSession && (b=in.read())!=-1){
           if(!collecting){if(prev==255&&b==216){collecting=true;jpg.reset();jpg.write(255);jpg.write(216);}}
           else {jpg.write(b);if(prev==255&&b==217){
             byte[] bytes=jpg.toByteArray();Bitmap bmp=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
-            if(bmp!=null)ui.post(()->{if(monitorOn){lastImage=bmp;screen.setImageBitmap(bmp);}});
+            if(bmp!=null)ui.post(()->{if(monitorOn && session==monitorSession){lastImage=bmp;screen.setImageBitmap(bmp);}});
             collecting=false;
           } if(jpg.size()>3000000){collecting=false;jpg.reset();}}
           prev=b;
@@ -239,6 +254,11 @@ public class MainActivity extends Activity {
         ui.post(()->{front=false;startCamera();if(cameraOn)moveTaskToBack(true);});
         out.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".getBytes());return;
       }
+      if(path.startsWith("/switch")){
+        ui.post(()->{front=!front;startCamera();});
+        out.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".getBytes());return;
+      }
+      if(path.startsWith("/audio")){streamAudio(out);return;}
       if(path.startsWith("/stream")){
         out.write("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nCache-Control: no-store\r\n\r\n".getBytes());
         while(running&&!s.isClosed()){
@@ -252,6 +272,48 @@ public class MainActivity extends Activity {
       }
     }catch(Exception ignored){}
   }
-  @Override protected void onDestroy(){running=false;monitorOn=false;stopCamera();
+  private void streamAudio(OutputStream out) throws IOException {
+    if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+      out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes());return;
+    }
+    final int rate=16000;
+    int min=AudioRecord.getMinBufferSize(rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
+    if(min<=0)return;
+    AudioRecord recorder=null;
+    try{
+      recorder=new AudioRecord(MediaRecorder.AudioSource.MIC,rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,4096));
+      if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)return;
+      out.write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\n\r\n".getBytes());
+      recorder.startRecording();
+      byte[] buf=new byte[2048];
+      while(running && cameraOn){
+        int n=recorder.read(buf,0,buf.length);
+        if(n>0){out.write(buf,0,n);out.flush();}
+        else if(n<0)break;
+      }
+    }catch(Exception e){showStatus("Mikrofon hatası: "+e.getMessage());}
+    finally{if(recorder!=null){try{recorder.stop();}catch(Exception ignored){}recorder.release();}}
+  }
+  private void startAudioMonitor(int session){
+    new Thread(()->{
+      AudioTrack player=null;HttpURLConnection conn=null;
+      try{
+        if(peerIp.isEmpty())return;
+        conn=(HttpURLConnection)new URL("http://"+peerIp+":"+port+"/audio?id="+URLEncoder.encode(myId,"UTF-8")).openConnection();
+        conn.setConnectTimeout(4000);conn.setReadTimeout(6000);
+        if(conn.getResponseCode()!=200){showStatus("Kamera telefonunda mikrofon izni gerekli");return;}
+        int min=AudioTrack.getMinBufferSize(16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
+        player=new AudioTrack(AudioManager.STREAM_MUSIC,16000,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,8192),AudioTrack.MODE_STREAM);
+        player.play();
+        try(InputStream in=conn.getInputStream()){
+          byte[] buf=new byte[2048];int n;
+          while(running && monitorOn && audioEnabled && session==monitorSession && (n=in.read(buf))!=-1)
+            if(n>0)player.write(buf,0,n);
+        }
+      }catch(Exception e){if(monitorOn && audioEnabled)showStatus("Ses bağlantısı kesildi");}
+      finally{if(player!=null){try{player.stop();}catch(Exception ignored){}player.release();}if(conn!=null)conn.disconnect();}
+    },"audio-monitor").start();
+  }
+  @Override protected void onDestroy(){running=false;monitorOn=false;monitorSession++;stopCamera();
     if(multicastLock!=null&&multicastLock.isHeld())multicastLock.release();super.onDestroy();}
 }
