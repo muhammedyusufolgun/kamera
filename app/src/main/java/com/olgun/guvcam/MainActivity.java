@@ -31,6 +31,8 @@ public class MainActivity extends Activity {
   private String myId, pairedId="";
   private long pairingUntil=0, closeTap=0;
   private volatile boolean switchingCamera=false;
+  private final Object cameraLock=new Object();
+  private volatile boolean remoteCamera=false;
   private Camera camera;
   private SurfaceTexture surface;
   private ImageView screen;
@@ -143,13 +145,17 @@ public class MainActivity extends Activity {
   private synchronized void startCamera(){
     if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){showStatus("Kamera izni gerekli");return;}
     switchingCamera=true;
+    frame.set(null);
     stopCamera();
     try{
       int selected=0;
       int count=Camera.getNumberOfCameras();
       for(int i=0;i<count;i++){Camera.CameraInfo info=new Camera.CameraInfo();Camera.getCameraInfo(i,info);
         if(info.facing==(front?Camera.CameraInfo.CAMERA_FACING_FRONT:Camera.CameraInfo.CAMERA_FACING_BACK)){selected=i;break;}}
-      camera=Camera.open(selected);
+      try{camera=Camera.open(selected);}catch(RuntimeException first){
+        try{Thread.sleep(350);}catch(InterruptedException ignored){}
+        camera=Camera.open(selected);
+      }
       Camera.Parameters p=camera.getParameters();
       if(p.getSupportedFlashModes()!=null && p.getSupportedFlashModes().contains(Camera.Parameters.FLASH_MODE_OFF))p.setFlashMode(Camera.Parameters.FLASH_MODE_OFF);
       Camera.Size size=p.getSupportedPreviewSizes().get(0);
@@ -233,13 +239,15 @@ public class MainActivity extends Activity {
           prev=b;
         }
         in.close();stream.disconnect();
-      }catch(Exception e){showStatus("Bağlantı kesildi: "+e.getMessage());}
+      }catch(Exception e){if(monitorOn && session==monitorSession)showStatus("Bağlantı kesildi: "+e.getMessage());}
     },"monitor").start();
   }
   private void serverLoop(){
-    try(ServerSocket server=new ServerSocket(port)){
+    try(ServerSocket server=new ServerSocket()){
+      server.setReuseAddress(true);
+      server.bind(new InetSocketAddress(port));
       while(running){Socket client=server.accept();new Thread(()->serve(client)).start();}
-    }catch(Exception e){showStatus("Sunucu açılamadı");}
+    }catch(Exception e){showStatus("Port "+port+" açılamadı: "+e.getMessage());}
   }
   private void serve(Socket client){
     try(Socket s=client){
@@ -253,11 +261,15 @@ public class MainActivity extends Activity {
         out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes());return;
       }
       if(path.startsWith("/start")){
-        ui.post(()->{front=false;startCamera();if(cameraOn)moveTaskToBack(true);});
+        ui.post(()->{front=false;remoteCamera=true;startCamera();});
         out.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".getBytes());return;
       }
       if(path.startsWith("/switch")){
-        ui.post(()->{front=!front;startCamera();});
+        ui.post(()->{
+          if(switchingCamera)return;
+          front=!front;
+          startCamera();
+        });
         out.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".getBytes());return;
       }
       if(path.startsWith("/audio")){s.setSoTimeout(0);streamAudio(out);return;}
