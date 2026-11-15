@@ -166,12 +166,32 @@ public class MainActivity extends Activity {
       for(Camera.Size z:p.getSupportedPreviewSizes())if(z.width<=1280 && z.width>size.width || size.width>1280 && z.width<=1280)size=z;
       p.setPreviewSize(size.width,size.height);camera.setParameters(p);
       final int w=size.width,ht=size.height;
+      Camera.CameraInfo cameraInfo=new Camera.CameraInfo();
+      Camera.getCameraInfo(selected,cameraInfo);
+      int rotation=getWindowManager().getDefaultDisplay().getRotation();
+      int degrees=rotation==Surface.ROTATION_90?90:rotation==Surface.ROTATION_180?180:rotation==Surface.ROTATION_270?270:0;
+      final int jpegRotation=(cameraInfo.facing==Camera.CameraInfo.CAMERA_FACING_FRONT)
+          ?(cameraInfo.orientation+degrees)%360
+          :(cameraInfo.orientation-degrees+360)%360;
       surface=new SurfaceTexture(11);camera.setPreviewTexture(surface);
       camera.setPreviewCallback((data,c)->{
         if(!cameraOn)return;
         try{ByteArrayOutputStream out=new ByteArrayOutputStream();
           new YuvImage(data,ImageFormat.NV21,w,ht,null).compressToJpeg(new Rect(0,0,w,ht),65,out);
-          byte[] jpg=out.toByteArray();frame.set(jpg);
+          byte[] jpg=out.toByteArray();
+          if(jpegRotation!=0){
+            Bitmap original=BitmapFactory.decodeByteArray(jpg,0,jpg.length);
+            if(original!=null){
+              Matrix matrix=new Matrix();matrix.postRotate(jpegRotation);
+              Bitmap upright=Bitmap.createBitmap(original,0,0,original.getWidth(),original.getHeight(),matrix,true);
+              ByteArrayOutputStream rotated=new ByteArrayOutputStream();
+              upright.compress(Bitmap.CompressFormat.JPEG,65,rotated);
+              jpg=rotated.toByteArray();
+              if(upright!=original)upright.recycle();
+              original.recycle();
+            }
+          }
+          frame.set(jpg);
           if(!monitorOn && !switchingCamera)ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(jpg,0,jpg.length);screen.setImageBitmap(lastImage);}});
         }catch(Exception ignored){}
       });
