@@ -72,13 +72,13 @@ public class MainActivity extends Activity {
     TextView heading=new TextView(this);heading.setText("Güvenlik Kamerası");heading.setTextColor(-1);
     heading.setBackgroundColor(0xff000000);heading.setGravity(Gravity.CENTER);heading.setTypeface(null,1);
     heading.setTextSize(22);
-    LinearLayout.LayoutParams h=new LinearLayout.LayoutParams(-1,55);h.topMargin=112;root.addView(heading,h);
+    LinearLayout.LayoutParams h=new LinearLayout.LayoutParams(-1,110);h.topMargin=112;root.addView(heading,h);
     LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.VERTICAL);
     Button monitor=button("Monitör",0xffb3e5fc),cam=button("Kamera",0xffc8e6c9);
     switchCam=button("Arka/Ön",0xffffcc80);Button pair=button("Eşleştir",0xffffeb3b);
     close=button("Kapat",0xffffcdd2);
     LinearLayout row1=new LinearLayout(this),row2=new LinearLayout(this);
-    for(Button b:new Button[]{monitor,cam,switchCam})row1.addView(b,new LinearLayout.LayoutParams(0,60,1));
+    for(Button b:new Button[]{monitor,cam,switchCam})row1.addView(b,new LinearLayout.LayoutParams(0,80,1));
     for(Button b:new Button[]{pair,close})row2.addView(b,new LinearLayout.LayoutParams(0,44,1));
     bar.addView(row1);bar.addView(row2);
     LinearLayout.LayoutParams controls=new LinearLayout.LayoutParams(-1,-2);controls.topMargin=16;root.addView(bar,controls);
