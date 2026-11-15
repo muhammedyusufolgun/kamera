@@ -30,6 +30,8 @@ public class MainActivity extends Activity {
   private volatile boolean remoteAudioAllowed=false;
   private volatile float zoomRatio=1f;
   private ScaleGestureDetector zoomGesture;
+  private GestureDetector doubleTapGesture;
+  private boolean monitorFullscreen=false;
   private final java.util.concurrent.ExecutorService zoomExecutor=java.util.concurrent.Executors.newSingleThreadExecutor();
   private final java.util.concurrent.atomic.AtomicBoolean zoomSending=new java.util.concurrent.atomic.AtomicBoolean(false);
   private volatile float pendingZoom=1f;
@@ -72,7 +74,7 @@ public class MainActivity extends Activity {
   }
   private void buildUi(){
     boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
-    if(landscape){
+    if(landscape || monitorFullscreen){
       getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);
       ImageView fullscreen=new ImageView(this);
       fullscreen.setBackgroundColor(0xff000000);
@@ -137,15 +139,14 @@ public class MainActivity extends Activity {
     });
   }
   private Bitmap orientForScreen(Bitmap source){
-    if(source==null)return null;
-    boolean landscape=getResources().getConfiguration().orientation==Configuration.ORIENTATION_LANDSCAPE;
-    // Stream frames are upright in portrait; turn portrait frames when the monitor is sideways.
-    if(landscape && source.getHeight()>source.getWidth()){
-      Matrix matrix=new Matrix();matrix.postRotate(90);
-      return Bitmap.createBitmap(source,0,0,source.getWidth(),source.getHeight(),matrix,true);
-    }
-
+    // Camera encoder already sends frames in the correct physical orientation.
+    // Rotating them again on the monitor caused sideways and upside-down video.
     return source;
+  }
+  private void toggleMonitorFullscreen(){
+    if(!monitorOn)return;
+    monitorFullscreen=!monitorFullscreen;
+    buildUi();
   }
   private android.graphics.drawable.Drawable createFrame(){
     android.graphics.drawable.GradientDrawable border=new android.graphics.drawable.GradientDrawable();
@@ -185,15 +186,17 @@ public class MainActivity extends Activity {
       Camera.getCameraInfo(selected,cameraInfo);
       int rotation=getWindowManager().getDefaultDisplay().getRotation();
       int degrees=rotation==Surface.ROTATION_90?90:rotation==Surface.ROTATION_180?180:rotation==Surface.ROTATION_270?270:0;
-      final int jpegRotation=(cameraInfo.facing==Camera.CameraInfo.CAMERA_FACING_FRONT)
-          ?(cameraInfo.orientation+degrees)%360
-          :(cameraInfo.orientation-degrees+360)%360;
+      final int sensorOrientation=cameraInfo.orientation;
+      final boolean frontFacing=cameraInfo.facing==Camera.CameraInfo.CAMERA_FACING_FRONT;
       surface=new SurfaceTexture(11);camera.setPreviewTexture(surface);
       camera.setPreviewCallback((data,c)->{
         if(!cameraOn)return;
         try{ByteArrayOutputStream out=new ByteArrayOutputStream();
           new YuvImage(data,ImageFormat.NV21,w,ht,null).compressToJpeg(new Rect(0,0,w,ht),65,out);
           byte[] jpg=out.toByteArray();
+          int currentRotation=getWindowManager().getDefaultDisplay().getRotation();
+          int displayDegrees=currentRotation==Surface.ROTATION_90?90:currentRotation==Surface.ROTATION_180?180:currentRotation==Surface.ROTATION_270?270:0;
+          int jpegRotation=frontFacing?(sensorOrientation+displayDegrees)%360:(sensorOrientation-displayDegrees+360)%360;
           if(jpegRotation!=0){
             Bitmap original=BitmapFactory.decodeByteArray(jpg,0,jpg.length);
             if(original!=null){
@@ -256,7 +259,7 @@ public class MainActivity extends Activity {
   }
   private void startMonitor(){
     if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->{lastImage=null;screen.setImageDrawable(null);});showStatus("Önce iki telefonu eşleştirin");return;}
-    stopCamera();monitorOn=true;zoomRatio=1f;monitorSession++;final int session=monitorSession;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
+    stopCamera();monitorFullscreen=false;monitorOn=true;zoomRatio=1f;monitorSession++;final int session=monitorSession;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
     final String ip=peerIp;
     if(audioEnabled)startAudioMonitor(session);
     new Thread(()->{
@@ -373,6 +376,10 @@ public class MainActivity extends Activity {
     }catch(Exception e){showStatus("Ses komutu gönderilemedi");}},"audio-control").start();
   }
   private void installZoomGesture(){
+    doubleTapGesture=new GestureDetector(this,new GestureDetector.SimpleOnGestureListener(){
+      @Override public boolean onDown(MotionEvent event){return true;}
+      @Override public boolean onDoubleTap(MotionEvent event){toggleMonitorFullscreen();return true;}
+    });
     zoomGesture=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
       @Override public boolean onScaleBegin(ScaleGestureDetector detector){return monitorOn;}
       @Override public boolean onScale(ScaleGestureDetector detector){
@@ -388,6 +395,7 @@ public class MainActivity extends Activity {
     screen.setOnTouchListener((v,event)->{
       if(!monitorOn)return false;
       zoomGesture.onTouchEvent(event);
+      if(event.getPointerCount()==1 && !zoomGesture.isInProgress())doubleTapGesture.onTouchEvent(event);
       return true; // Consume ACTION_DOWN so Android delivers subsequent pinch events.
     });
   }
