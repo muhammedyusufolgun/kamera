@@ -30,6 +30,9 @@ public class MainActivity extends Activity {
   private volatile boolean remoteAudioAllowed=false;
   private volatile float zoomRatio=1f;
   private ScaleGestureDetector zoomGesture;
+  private final java.util.concurrent.ExecutorService zoomExecutor=java.util.concurrent.Executors.newSingleThreadExecutor();
+  private final java.util.concurrent.atomic.AtomicBoolean zoomSending=new java.util.concurrent.atomic.AtomicBoolean(false);
+  private volatile float pendingZoom=1f;
   private volatile String candidateIp="", candidateId="", peerIp="";
   private String myId, pairedId="";
   private long pairingUntil=0, closeTap=0;
@@ -371,36 +374,67 @@ public class MainActivity extends Activity {
   }
   private void installZoomGesture(){
     zoomGesture=new ScaleGestureDetector(this,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
+      @Override public boolean onScaleBegin(ScaleGestureDetector detector){return monitorOn;}
       @Override public boolean onScale(ScaleGestureDetector detector){
         if(!monitorOn)return false;
         zoomRatio=Math.max(1f,Math.min(5f,zoomRatio*detector.getScaleFactor()));
-        if(!peerIp.isEmpty()){
-          final float ratio=zoomRatio;
-          final String ip=peerIp;
-          // Limit requests while fingers move, without interrupting the video stream.
-          long now=System.currentTimeMillis();
-          if(now-lastZoomSent>120){lastZoomSent=now;
-            new Thread(()->{try{
-              HttpURLConnection c=(HttpURLConnection)new URL("http://"+ip+":"+port+"/zoom?id="+myId+"&level="+ratio).openConnection();
-              c.setConnectTimeout(2000);c.setReadTimeout(2000);c.getResponseCode();c.disconnect();
-            }catch(Exception ignored){}},"zoom").start();
-          }
-        }
+        sendZoom(zoomRatio);
         return true;
       }
+      @Override public void onScaleEnd(ScaleGestureDetector detector){
+        if(monitorOn)sendZoom(zoomRatio);
+      }
     });
-    screen.setOnTouchListener((v,event)->{if(monitorOn && zoomGesture!=null){zoomGesture.onTouchEvent(event);return event.getPointerCount()>1 || zoomGesture.isInProgress();}return false;});
+    screen.setOnTouchListener((v,event)->{
+      if(!monitorOn)return false;
+      zoomGesture.onTouchEvent(event);
+      return event.getPointerCount()>1 || zoomGesture.isInProgress()
+          || event.getActionMasked()==MotionEvent.ACTION_POINTER_UP;
+    });
   }
-  private long lastZoomSent=0;
+  private void sendZoom(float ratio){
+    pendingZoom=ratio;
+    if(peerIp.isEmpty() || !zoomSending.compareAndSet(false,true))return;
+    zoomExecutor.execute(()->{
+      try{
+        while(running && monitorOn){
+          float target=pendingZoom;
+          try{
+            HttpURLConnection c=(HttpURLConnection)new URL("http://"+peerIp+":"+port+
+                "/zoom?id="+URLEncoder.encode(myId,"UTF-8")+"&level="+target).openConnection();
+            c.setConnectTimeout(2500);c.setReadTimeout(2500);
+            int response=c.getResponseCode();c.disconnect();
+            if(response!=200)showStatus("Yakınlaştırma komutu reddedildi: "+response);
+          }catch(Exception e){showStatus("Yakınlaştırma bağlantısı: "+e.getMessage());}
+          lastZoomApplied=target;
+          if(Math.abs(target-pendingZoom)<0.01f)break;
+        }
+      }finally{
+        zoomSending.set(false);
+        if(running && monitorOn && Math.abs(pendingZoom-lastZoomApplied)>0.01f){
+          // A newer gesture value arrived while the worker was completing.
+          sendZoom(pendingZoom);
+        }
+      }
+    });
+  }
+  private volatile float lastZoomApplied=1f;
   private synchronized void applyCameraZoom(float ratio){
     if(camera==null)return;
     try{
       Camera.Parameters p=camera.getParameters();
       if(!p.isZoomSupported())return;
-      int max=p.getMaxZoom();
-      int target=Math.max(0,Math.min(max,Math.round((ratio-1f)/4f*max)));
-      p.setZoom(target);camera.setParameters(p);
-    }catch(Exception e){showStatus("Yakınlaştırma desteklenmiyor");}
+      java.util.List<Integer> ratios=p.getZoomRatios();
+      int target=0;
+      if(ratios!=null && !ratios.isEmpty()){
+        int wanted=Math.round(Math.max(1f,Math.min(5f,ratio))*100);
+        for(int i=0;i<ratios.size();i++){
+          if(Math.abs(ratios.get(i)-wanted)<Math.abs(ratios.get(target)-wanted))target=i;
+        }
+      }else target=Math.round((ratio-1f)/4f*p.getMaxZoom());
+      p.setZoom(Math.max(0,Math.min(p.getMaxZoom(),target)));
+      camera.setParameters(p);
+    }catch(Exception e){showStatus("Kamera yakınlaştırma hatası: "+e.getMessage());}
   }
   private void startAudioMonitor(int session){
     new Thread(()->{
@@ -427,5 +461,6 @@ public class MainActivity extends Activity {
     },"audio-monitor").start();
   }
   @Override protected void onDestroy(){running=false;monitorOn=false;monitorSession++;stopCamera();
+    zoomExecutor.shutdownNow();
     if(multicastLock!=null&&multicastLock.isHeld())multicastLock.release();super.onDestroy();}
 }
