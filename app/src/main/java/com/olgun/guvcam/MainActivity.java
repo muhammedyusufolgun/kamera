@@ -78,12 +78,14 @@ public class MainActivity extends Activity {
     switchCam=button("Arka/Ön",0xffffcc80);Button pair=button("Eşleştir",0xffffeb3b);
     close=button("Kapat",0xffffcdd2);
     LinearLayout row1=new LinearLayout(this),row2=new LinearLayout(this);
-    for(Button b:new Button[]{monitor,cam,switchCam})row1.addView(b,new LinearLayout.LayoutParams(0,44,1));
+    for(Button b:new Button[]{monitor,cam,switchCam})row1.addView(b,new LinearLayout.LayoutParams(0,60,1));
     for(Button b:new Button[]{pair,close})row2.addView(b,new LinearLayout.LayoutParams(0,44,1));
     bar.addView(row1);bar.addView(row2);
-    root.addView(bar);
+    LinearLayout.LayoutParams controls=new LinearLayout.LayoutParams(-1,-2);controls.topMargin=16;root.addView(bar,controls);
     screen=new ImageView(this);screen.setBackgroundColor(0xffffffff);screen.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,220);s.topMargin=5;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);if(lastImage!=null)screen.setImageBitmap(lastImage);
+    int displayWidth=getResources().getDisplayMetrics().widthPixels;
+    int horizontalPadding=(int)(12*getResources().getDisplayMetrics().density);
+    LinearLayout.LayoutParams s=new LinearLayout.LayoutParams(-1,displayWidth-horizontalPadding);s.topMargin=16;screen.setPadding(2,2,2,2);screen.setBackground(createFrame());root.addView(screen,s);if(lastImage!=null)screen.setImageBitmap(lastImage);
     status=new TextView(this);status.setText("Eşleşme bekleniyor");status.setTextColor(0xff777777);
     status.setGravity(Gravity.CENTER);root.addView(status);
     TextView signature=new TextView(this);signature.setText("Muhammed Yusuf OLGUN");
