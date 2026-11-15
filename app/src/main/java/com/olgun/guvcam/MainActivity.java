@@ -227,7 +227,7 @@ public class MainActivity extends Activity {
           int deviceDegrees=cameraDeviceDegrees;
           int jpegRotation=frontFacing
               ?(sensorOrientation-deviceDegrees+360)%360
-              :(sensorOrientation-deviceDegrees+360)%360;
+              :(sensorOrientation+deviceDegrees)%360;
           if(jpegRotation!=0){
             Bitmap original=BitmapFactory.decodeByteArray(jpg,0,jpg.length);
             if(original!=null){
