@@ -192,7 +192,7 @@ public class MainActivity extends Activity {
             }
           }
           frame.set(jpg);
-          if(!monitorOn && !switchingCamera)ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(jpg,0,jpg.length);screen.setImageBitmap(lastImage);}});
+          if(!monitorOn && !switchingCamera){final byte[] displayJpeg=jpg;ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(displayJpeg,0,displayJpeg.length);screen.setImageBitmap(lastImage);}});}
         }catch(Exception ignored){}
       });
       cameraOn=true;camera.startPreview();applyCameraZoom(zoomRatio);switchingCamera=false;showStatus(front?"Ön kamera açık":"Arka kamera açık");
