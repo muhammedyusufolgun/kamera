@@ -30,6 +30,7 @@ public class MainActivity extends Activity {
   private volatile String candidateIp="", candidateId="", peerIp="";
   private String myId, pairedId="";
   private long pairingUntil=0, closeTap=0;
+  private volatile boolean switchingCamera=false;
   private Camera camera;
   private SurfaceTexture surface;
   private ImageView screen;
@@ -105,7 +106,7 @@ public class MainActivity extends Activity {
       front=!front;
       if(monitorOn && !peerIp.isEmpty()){
         final String endpoint="http://"+peerIp+":"+port+"/switch?id="+myId;
-        new Thread(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(endpoint).openConnection();c.setConnectTimeout(3000);c.getResponseCode();c.disconnect();}catch(Exception e){showStatus("Kamera değiştirme hatası");}}).start();
+        new Thread(()->{try{HttpURLConnection c=(HttpURLConnection)new URL(endpoint).openConnection();c.setConnectTimeout(5000);c.setReadTimeout(15000);int result=c.getResponseCode();c.disconnect();if(result!=200)showStatus("Kamera değiştirilemedi: "+result);}catch(Exception e){showStatus("Kamera değiştirme hatası");}}).start();
       }else if(cameraOn)startCamera();
       else showStatus(front?"Ön kamera seçildi":"Arka kamera seçildi");
     });
@@ -141,6 +142,7 @@ public class MainActivity extends Activity {
   }
   private synchronized void startCamera(){
     if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){showStatus("Kamera izni gerekli");return;}
+    switchingCamera=true;
     stopCamera();
     try{
       int selected=0;
@@ -160,11 +162,11 @@ public class MainActivity extends Activity {
         try{ByteArrayOutputStream out=new ByteArrayOutputStream();
           new YuvImage(data,ImageFormat.NV21,w,ht,null).compressToJpeg(new Rect(0,0,w,ht),65,out);
           byte[] jpg=out.toByteArray();frame.set(jpg);
-          if(!monitorOn)ui.post(()->{if(cameraOn){lastImage=BitmapFactory.decodeByteArray(jpg,0,jpg.length);screen.setImageBitmap(lastImage);}});
+          if(!monitorOn && !switchingCamera)ui.post(()->{if(cameraOn && !monitorOn){lastImage=BitmapFactory.decodeByteArray(jpg,0,jpg.length);screen.setImageBitmap(lastImage);}});
         }catch(Exception ignored){}
       });
-      cameraOn=true;camera.startPreview();showStatus(front?"Ön kamera açık":"Arka kamera açık");
-    }catch(Exception e){stopCamera();showStatus("Kamera açılamadı: "+e.getMessage());}
+      cameraOn=true;camera.startPreview();switchingCamera=false;showStatus(front?"Ön kamera açık":"Arka kamera açık");
+    }catch(Exception e){stopCamera();switchingCamera=false;showStatus("Kamera açılamadı: "+e.getMessage());}
   }
   private void pair(){
     pairingUntil=System.currentTimeMillis()+60000;
@@ -218,7 +220,7 @@ public class MainActivity extends Activity {
         HttpURLConnection conn=(HttpURLConnection)command.openConnection();conn.setConnectTimeout(3000);
         if(conn.getResponseCode()!=200)throw new IOException("Erişim reddedildi");conn.disconnect();
         HttpURLConnection stream=(HttpURLConnection)new URL("http://"+ip+":"+port+"/stream?id="+URLEncoder.encode(myId,"UTF-8")).openConnection();
-        stream.setConnectTimeout(4000);stream.setReadTimeout(6000);
+        stream.setConnectTimeout(4000);stream.setReadTimeout(20000);
         InputStream in=stream.getInputStream();ByteArrayOutputStream jpg=new ByteArrayOutputStream();
         int prev=-1,b;boolean collecting=false;
         while(monitorOn && session==monitorSession && (b=in.read())!=-1){
@@ -258,12 +260,13 @@ public class MainActivity extends Activity {
         ui.post(()->{front=!front;startCamera();});
         out.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK".getBytes());return;
       }
-      if(path.startsWith("/audio")){streamAudio(out);return;}
+      if(path.startsWith("/audio")){s.setSoTimeout(0);streamAudio(out);return;}
       if(path.startsWith("/stream")){
+        s.setSoTimeout(0);
         out.write("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nCache-Control: no-store\r\n\r\n".getBytes());
         while(running&&!s.isClosed()){
           byte[] bytes=frame.get();
-          if(bytes!=null){
+          if(bytes!=null && cameraOn){
             out.write(("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "+bytes.length+"\r\n\r\n").getBytes());
             out.write(bytes);out.write("\r\n".getBytes());out.flush();
           }
