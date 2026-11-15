@@ -76,6 +76,22 @@ public class MainActivity extends Activity {
     new Thread(this::discoveryLoop,"discovery").start();
     new Thread(this::serverLoop,"server").start();
   }
+  @Override protected void onResume(){
+    super.onResume();
+    // Start while visible: Android 14+ forbids starting camera/mic FGS from background.
+    if(checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED &&
+       checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED &&
+       !CaptureService.active){
+      try{startForegroundService(new Intent(this,CaptureService.class));}catch(Exception ignored){}
+    }
+  }
+  @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grants){
+    super.onRequestPermissionsResult(requestCode,permissions,grants);
+    if(checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED &&
+       checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED){
+      try{startForegroundService(new Intent(this,CaptureService.class));}catch(Exception ignored){}
+    }
+  }
   @Override public void onConfigurationChanged(Configuration config){
     super.onConfigurationChanged(config);
     buildUi();
@@ -175,6 +191,7 @@ public class MainActivity extends Activity {
   }
   private synchronized void startCamera(){
     if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){showStatus("Kamera izni gerekli");return;}
+    if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},2);showStatus("Arka plan aktarımı için mikrofon izni gerekli");return;}
     switchingCamera=true;
     if(!CaptureService.active){try{startForegroundService(new Intent(this,CaptureService.class));}catch(Exception e){showStatus("Arka plan servisi başlatılamadı: "+e.getMessage());}}
     frame.set(null);
