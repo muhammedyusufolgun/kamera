@@ -43,6 +43,7 @@ public class MainActivity extends Activity {
   private volatile boolean switchingCamera=false;
   private final Object cameraLock=new Object();
   private volatile boolean remoteCamera=false;
+  private volatile boolean pausedByUser=false;
   private Camera camera;
   private SurfaceTexture surface;
   private ImageView screen;
@@ -100,6 +101,7 @@ public class MainActivity extends Activity {
     TextView heading=new TextView(this);heading.setText("Güvenlik Kamerası");heading.setTextColor(-1);
     heading.setBackgroundColor(0xff000000);heading.setGravity(Gravity.CENTER);heading.setTypeface(null,1);
     heading.setTextSize(22);
+    heading.setOnClickListener(v->pauseMonitorReception());
     LinearLayout.LayoutParams h=new LinearLayout.LayoutParams(-1,110);h.topMargin=112;root.addView(heading,h);
     LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.VERTICAL);
     Button monitor=button("Monitör",0xffb3e5fc),cam=button("Kamera",0xffc8e6c9);
@@ -174,6 +176,7 @@ public class MainActivity extends Activity {
   private synchronized void startCamera(){
     if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){showStatus("Kamera izni gerekli");return;}
     switchingCamera=true;
+    if(!CaptureService.active){try{startForegroundService(new Intent(this,CaptureService.class));}catch(Exception e){showStatus("Arka plan servisi başlatılamadı: "+e.getMessage());}}
     frame.set(null);
     stopCamera();
     try{
@@ -268,7 +271,20 @@ public class MainActivity extends Activity {
       }
     }catch(Exception e){showStatus("Ağ keşfi hatası");}
   }
+  private void pauseMonitorReception(){
+    monitorOn=false;monitorSession++;monitorFullscreen=false;
+    if(audioEnabled)sendRemoteAudioState(false);
+    pausedByUser=true;
+    lastImage=null;
+    if(screen!=null)screen.setImageDrawable(null);
+    showStatus("İzleme duraklatıldı; eşleşme korundu");
+    if(!peerIp.isEmpty())new Thread(()->{try{
+      HttpURLConnection c=(HttpURLConnection)new URL("http://"+peerIp+":"+port+"/pause?id="+URLEncoder.encode(myId,"UTF-8")).openConnection();
+      c.setConnectTimeout(3000);c.setReadTimeout(3000);c.getResponseCode();c.disconnect();
+    }catch(Exception ignored){}},"pause-monitor").start();
+  }
   private void startMonitor(){
+    pausedByUser=false;
     if(pairedId.isEmpty()||peerIp.isEmpty()){ui.post(()->{lastImage=null;screen.setImageDrawable(null);});showStatus("Önce iki telefonu eşleştirin");return;}
     stopCamera();monitorFullscreen=false;monitorOn=true;zoomRatio=1f;monitorSession++;final int session=monitorSession;ui.post(()->screen.setImageDrawable(null));showStatus("Görüntü bağlanıyor");
     final String ip=peerIp;
@@ -312,6 +328,11 @@ public class MainActivity extends Activity {
       OutputStream out=s.getOutputStream();
       if(pairedId.isEmpty()||!pairedId.equals(id)){
         out.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".getBytes());return;
+      }
+      if(path.startsWith("/pause")){
+        remoteAudioAllowed=false;
+        ui.post(()->{stopCamera();showStatus("Monitör duraklatıldı");});
+        out.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".getBytes());return;
       }
       if(path.startsWith("/start")){
         ui.post(()->{front=false;remoteCamera=true;startCamera();});
@@ -481,5 +502,6 @@ public class MainActivity extends Activity {
   @Override protected void onDestroy(){running=false;monitorOn=false;monitorSession++;stopCamera();
     zoomExecutor.shutdownNow();
     if(cameraOrientationListener!=null)cameraOrientationListener.disable();
+    stopService(new Intent(this,CaptureService.class));
     if(multicastLock!=null&&multicastLock.isHeld())multicastLock.release();super.onDestroy();}
 }
