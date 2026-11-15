@@ -388,8 +388,7 @@ public class MainActivity extends Activity {
     screen.setOnTouchListener((v,event)->{
       if(!monitorOn)return false;
       zoomGesture.onTouchEvent(event);
-      return event.getPointerCount()>1 || zoomGesture.isInProgress()
-          || event.getActionMasked()==MotionEvent.ACTION_POINTER_UP;
+      return true; // Consume ACTION_DOWN so Android delivers subsequent pinch events.
     });
   }
   private void sendZoom(float ratio){
